@@ -11,6 +11,7 @@ from pyproj import CRS, Transformer
 
 #Numpy
 import numpy as np
+import polars as pl
 
 #Timing
 import time
@@ -83,6 +84,9 @@ def proj_las(las_df, input_crs, ouput_crs) -> np.array:
 
     return las_array_clipped
 
+def proximity_analysis(las_array, z_thresh) :    #only use once filtered
+    for point in las_array:
+        z_diff = point[:,2]
 #%% Opening the las data
 ##Reading all data
 las_df = laspy.read(las_fname)
@@ -107,14 +111,21 @@ las_df_extent = [las_df.x.min,las_df.x.max,
 #%% Create Shapefile to Cut Las Dataset
 start = time.time()
 ## Formating the bounds
-#Reading the box
+#Reading the box and lake
 fishnet_fname = (Path.cwd()).parents[1].joinpath(r'Emmett_Reed_Fishnet.json')
 box = gp.read_file(fishnet_fname).dissolve()
+
+#Adding the lake 
+lake_fname = (Path.cwd()).parents[1].joinpath(r'Emmett_Reed_Lake.geojson')
+box_lake = gp.read_file(lake_fname).dissolve()
+
 #Projecting the box
 box_coord_syst = box.crs
+box_lake_coord_syst = box_lake.crs
 
 #Getting bounds
 minx, miny, maxx, maxy = box.total_bounds
+minx_l, miny_l, maxx_l, maxy_l = box_lake.total_bounds
 box_np = box.to_numpy()
 
 
@@ -123,6 +134,7 @@ if proj == box_coord_syst:
     pass
 else:
     transformer = Transformer.from_crs(proj, box_coord_syst, always_xy=True)
+    reverse_transformer = Transformer.from_crs(box_coord_syst, proj, always_xy=True)
 
     # Get the x, y, and z coordinates 
     las_x = las_ground_df.x.copy()
@@ -151,13 +163,20 @@ else:
 
 
 ##Bools for Values
-x_valid = (las_ground_df.x >= minx) & (las_ground_df.x <= maxx)
-y_valid = (las_ground_df.y >= miny) & (las_ground_df.y <= maxy)
+x_valid = ((las_ground_df.x >= minx) & (las_ground_df.x <= maxx) ) & ((las_ground_df.x >= maxx_l) )
+
+y_valid = ((las_ground_df.y >= miny) & (las_ground_df.y <= maxy)) & ((las_ground_df.y <= miny_l) )
 
 #combined Bools
 valid_points = x_valid & y_valid
 
-## Clipping and Converting to Numpy Array
+#Working with original precision
+x_precise_valid = ((las_x >= minx) & (las_x <= maxx) ) & ((las_x >= maxx_l) )
+y_precise_valid = ((las_y >= miny) & (las_y <= maxy)) & ((las_y <= miny_l) )
+
+valid_points_precise = x_precise_valid & y_precise_valid
+
+# Clipping and Converting to Numpy Array
 #Creating array
 # las_array = np.vstack((las_ground_df.x, 
 #                        las_ground_df.y, 
@@ -170,9 +189,13 @@ las_array = np.vstack((las_x,
 
 #Clipping 
 las_array_clipped = las_array[valid_points]
+las_array_clipped_precise = las_array[valid_points_precise]
+
 end = time.time()
 print(f'Elapsed Time {end-start}')
 
+#%% Checking the array head
+las_ground_df.x[:10]
 #%% Working with the Cropped LAS file
 ##What are some statistics on the Elevation?
 #Numpy Array
@@ -188,27 +211,42 @@ sd = np.std(las_elev_array)
 #Quantiles
 # perc_5 = np.percentile(las_elev_array, 1)
 # q1 = np.percentile(las_elev_array, 25)
-perc_5 = np.quantile(las_elev_array, .01)
+perc_5 = np.quantile(las_elev_array, .001)
 quantile_1 = np.quantile(las_elev_array, .25)
 
 #A 3 Z-score for outside the 97.5%
 threshold = ((-3*sd) + mean_elev)
 
-#Histogram
-# sns.histplot(las_elev_array, stat='count')
-sns.histplot(las_elev_array[np.where(las_elev_array<perc_5)], stat='frequency')
+##Histogram
+#All points
+# all_points_hist = sns.histplot(las_elev_array).set_title('LiDAR Data Elevation Hist')
+#Filtered
+filt_points_hist = sns.histplot(las_elev_array[np.where(las_elev_array<perc_5)], stat='frequency')
+
+filt_points_hist
 #%% Tag Points Greater than 75th percentile
 #Cloud points greater than the q4 value
-las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < threshold)]
+# las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < threshold)]
 
 #Manually select
 las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < perc_5)]
+las_array_filt_precise = las_array_clipped_precise[np.where(las_array_clipped_precise[:,2] < perc_5)]
+
+## Transforming array to projected coords
+reproj_x, reproj_y, reproj_z = reverse_transformer.transform( las_array_filt[:,0], las_array_filt[:,1], las_array_filt[:,2])
+
+#%% Using the original data
+#Getting the original Las df
 las_df_filt = las_df.points[las_df.z<=perc_5] #where 2 is ground
+las_df_filt_2 = las_df.points[  ((las_df.x >= reproj_x.min()) & (las_df.x <=reproj_x.max())) &
+                                ((las_df.y >= reproj_y.min()) & (las_df.y <=reproj_y.max())) &
+                                ((las_df.z <= 16))
+                                    ]
 #%% Write to las
 start = time.time()
 
 ##Writing
-writ_path = (Path.cwd()).parent.parent.joinpath(r'Filt_USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_218755_E.las')
+writ_path = (Path.cwd()).parent.parent.joinpath(r'Filt_No_Lake2_USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_218755_E.las')
 if os.path.exists(writ_path):
     print('File Exists')
 else:
@@ -226,7 +264,18 @@ else:
         point_record.z = las_array_filt[:,2]
         
         #Writing
-        wr.write_points(las_df_filt)
+        # wr.write_points(las_df_filt)
+        wr.write_points(las_df_filt_2)
+
+
+#%%Write to Text
+#Creating Writ Path
+writ_path_txt = (Path.cwd()).parent.parent.joinpath(r'Emmett_Reed_Lidar_Coords.txt')
+
+#Creating df to write
+(pl.from_numpy(las_array_filt_precise).select(pl.col(['column_0', 'column_1']))
+                            .rename({'column_0' : 'X_Coords','column_1' : 'Y_Coords'})
+                            .write_csv(writ_path_txt, separator='|'))
 
 end = time.time()
 print(f'Elapsed Time {end-start}')
