@@ -194,8 +194,7 @@ las_array_clipped_precise = las_array[valid_points_precise]
 end = time.time()
 print(f'Elapsed Time {end-start}')
 
-#%% Checking the array head
-las_ground_df.x[:10]
+
 #%% Working with the Cropped LAS file
 ##What are some statistics on the Elevation?
 #Numpy Array
@@ -211,7 +210,7 @@ sd = np.std(las_elev_array)
 #Quantiles
 # perc_5 = np.percentile(las_elev_array, 1)
 # q1 = np.percentile(las_elev_array, 25)
-perc_5 = np.quantile(las_elev_array, .001)
+perc_001= np.quantile(las_elev_array, .001)
 quantile_1 = np.quantile(las_elev_array, .25)
 
 #A 3 Z-score for outside the 97.5%
@@ -221,7 +220,7 @@ threshold = ((-3*sd) + mean_elev)
 #All points
 # all_points_hist = sns.histplot(las_elev_array).set_title('LiDAR Data Elevation Hist')
 #Filtered
-filt_points_hist = sns.histplot(las_elev_array[np.where(las_elev_array<perc_5)], stat='frequency')
+filt_points_hist = sns.histplot(las_elev_array[np.where(las_elev_array<perc_001)], stat='frequency')
 
 filt_points_hist
 #%% Tag Points Greater than 75th percentile
@@ -229,24 +228,26 @@ filt_points_hist
 # las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < threshold)]
 
 #Manually select
-las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < perc_5)]
-las_array_filt_precise = las_array_clipped_precise[np.where(las_array_clipped_precise[:,2] < perc_5)]
+las_array_filt = las_array_clipped[np.where(las_array_clipped[:,2] < perc_001)]
+las_array_filt_precise = las_array_clipped_precise[np.where(las_array_clipped_precise[:,2] < perc_001)]
 
 ## Transforming array to projected coords
 reproj_x, reproj_y, reproj_z = reverse_transformer.transform( las_array_filt[:,0], las_array_filt[:,1], las_array_filt[:,2])
 
 #%% Using the original data
 #Getting the original Las df
-las_df_filt = las_df.points[las_df.z<=perc_5] #where 2 is ground
+las_df_filt = las_df.points[las_df.z<=perc_001] #where 2 is ground
 las_df_filt_2 = las_df.points[  ((las_df.x >= reproj_x.min()) & (las_df.x <=reproj_x.max())) &
                                 ((las_df.y >= reproj_y.min()) & (las_df.y <=reproj_y.max())) &
-                                ((las_df.z <= 16))
+                                ((las_df.z <= perc_001))   
                                     ]
 #%% Write to las
 start = time.time()
 
 ##Writing
-writ_path = (Path.cwd()).parent.parent.joinpath(r'Filt_No_Lake2_USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_218755_E.las')
+# writ_path = (Path.cwd()).parent.parent.joinpath(r'Filt_No_Lake2_USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_218755_E.las')
+writ_path = (Path.cwd()).parent.parent.joinpath(r'Filt_point1_USGS_LPC_FL_Peninsular_FDEM_2018_D19_DRRA_LID2019_218755_E.las')
+
 if os.path.exists(writ_path):
     print('File Exists')
 else:
